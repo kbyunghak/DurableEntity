@@ -19,7 +19,7 @@ builder.ConfigureFunctionsWebApplication();
 
 // Durable Entities
 builder.Services.AddDurableTaskClient(options => options.UseGrpc());
-builder.Services.AddSingleton<IConnectorStateEntity, ConnectorStateEntity>();
+builder.Services.AddSingleton<ConnectorStateEntity>();
 
 // Logging
 builder.Services.AddLogging(loggingBuilder =>

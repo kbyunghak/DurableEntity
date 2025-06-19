@@ -1,90 +1,106 @@
-﻿using Microsoft.Azure.Functions.Worker;
+﻿using Azure;
+using DurableEntityTest;
+using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask.Client;
+using Microsoft.DurableTask.Client.Entities;
 using Microsoft.DurableTask.Entities;
 using Newtonsoft.Json;
+using Serilog;
 using System.Net;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 public class ConnectorStateFunctions
 {
-    public record StateRequest(string ConnectorId);
+    public record StateUpdateRequest(
+        [property: System.Text.Json.Serialization.JsonConverter(typeof(JsonStringEnumConverter))] ConnectorState State);
 
-    [Function("SetConnectorFaulted")]
-    public async Task<HttpResponseData> SetFaulted(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "connector/faulted")] HttpRequestData req,
+    [Function("SetConnectorState")]
+    public async Task<HttpResponseData> SetConnectorState(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "connector/{connectorId}/state")] HttpRequestData req,
+        string connectorId,
         [DurableClient] DurableTaskClient client)
-    {
-        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-        StateRequest? data = JsonConvert.DeserializeObject<StateRequest>(requestBody);
-
-        if (string.IsNullOrWhiteSpace(data?.ConnectorId))
+    {        
+        try
         {
-            var bad = req.CreateResponse(HttpStatusCode.BadRequest);
-            await bad.WriteStringAsync("Missing connectorId in request body.");
-            return bad;
+            Log.Information("C# HTTP trigger function processed a request.");
+
+            if (string.IsNullOrWhiteSpace(connectorId))
+            {
+                var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                await bad.WriteStringAsync("Missing connectorId.");
+                return bad;
+            }
+            var body = await System.Text.Json.JsonSerializer.DeserializeAsync<StateUpdateRequest>(req.Body, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            if (body == null)
+            {
+                var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                await bad.WriteStringAsync("Missing or invalid request body.");
+                return bad;
+            }
+            //test           
+            var entityId = new EntityInstanceId(nameof(ConnectorStateEntity), connectorId);
+            await client.Entities.SignalEntityAsync(entityId, "SetState", body.State);
+
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            await response.WriteStringAsync($"Connector {connectorId} state set to '{body.State}'.");
+            return response;
         }
-
-        var entityId = new EntityInstanceId(nameof(ConnectorStateEntity), data.ConnectorId);
-        Console.WriteLine($"[Signal] Sending 'faulted' to entity ID: {entityId}");        
-        await client.Entities.SignalEntityAsync(entityId, "SetFaulted", null);
-
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteStringAsync($"Connector {data.ConnectorId} set to faulted.");
-        return response;
+        catch (Exception e)
+        {
+            Log.Error(e, "An unhandled error occurred while processing a post event: {message}", e.Message);
+            var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+            await errorResponse.WriteStringAsync("Internal error occurred.");
+            return errorResponse;
+        }        
     }
-
-    [Function("SetConnectorNormal")]
-    public async Task<HttpResponseData> SetNormal(
-       [HttpTrigger(AuthorizationLevel.Function, "post", Route = "connector/normal")] HttpRequestData req,
+    [Function("GetConnectorState")]
+    public async Task<HttpResponseData> GetConnectorState(
+       [HttpTrigger(AuthorizationLevel.Function, "get", Route = "connector/{connectorId}/state")] HttpRequestData req,
+       string connectorId,
        [DurableClient] DurableTaskClient client)
     {
-        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-        StateRequest? data = JsonConvert.DeserializeObject<StateRequest>(requestBody);
-
-        if (string.IsNullOrWhiteSpace(data?.ConnectorId))
+        try
         {
-            var bad = req.CreateResponse(HttpStatusCode.BadRequest);
-            await bad.WriteStringAsync("Missing connectorId in request body.");
-            return bad;
+            Log.Information("C# HTTP trigger function processed a request.");
+
+            var entityId = new EntityInstanceId(nameof(ConnectorStateEntity), connectorId);
+            EntityMetadata<ConnectorStateEntity>? entity = null;
+
+            for (int i = 0; i < 3; i++)
+            {
+                entity = await client.Entities.GetEntityAsync<ConnectorStateEntity>(entityId);
+                if (entity?.State != null)
+                    break;
+
+                await Task.Delay(300);
+            }
+
+            var response = req.CreateResponse(HttpStatusCode.OK);
+
+            if (entity?.State == null)
+            {
+                response.StatusCode = HttpStatusCode.NotFound;
+                await response.WriteStringAsync($"Connector {connectorId} does not exist or is not initialized.");
+            }
+            else
+            {
+                await response.WriteStringAsync($"Connector {connectorId} state is '{entity.State.State}'.");
+            }
+
+            return response;
         }
-
-        var entityId = new EntityInstanceId(nameof(ConnectorStateEntity), data.ConnectorId);
-        Console.WriteLine($"[Signal] Sending 'normal' to entity ID: {entityId}");
-        await client.Entities.SignalEntityAsync(entityId, "SetNormal", null);
-
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteStringAsync($"Connector {data.ConnectorId} set to normal.");
-        return response;
+        catch (Exception e)
+        {
+            Log.Error(e, "An unhandled error occurred while processing a post event: {message}", e.Message);
+            var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+            await errorResponse.WriteStringAsync("Internal error occurred.");
+            return errorResponse;
+        }
     }
-
-    [Function("GetConnectorState")]
-    public async Task<HttpResponseData> GetState(
-    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "connector/state/{connectorId}")] HttpRequestData req,
-    string connectorId,
-    [DurableClient] DurableTaskClient client)
-    {
-        if (string.IsNullOrWhiteSpace(connectorId))
-        {
-            var bad = req.CreateResponse(HttpStatusCode.BadRequest);
-            await bad.WriteStringAsync("Missing connectorId.");
-            return bad;
-        }
-
-        var entityId = new EntityInstanceId(nameof(ConnectorStateEntity), connectorId);
-        var entityResponse = await client.Entities.GetEntityAsync<string>(entityId);
-
-        var response = req.CreateResponse(HttpStatusCode.OK);
-
-        if (entityResponse == null || string.IsNullOrEmpty(entityResponse.State))
-        {
-            await response.WriteStringAsync($"Connector {connectorId} does not exist.");
-        }
-        else
-        {
-            await response.WriteStringAsync($"Connector {connectorId} state is '{entityResponse.State}'.");
-        }
-
-        return response;
-    }
-
+   
 }
