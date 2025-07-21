@@ -1,5 +1,6 @@
 ﻿using Azure;
 using DurableEntityTest;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask.Client;
@@ -27,7 +28,7 @@ public class ConnectorStateFunctions
             Log.Information("C# HTTP trigger function processed a request.");
 
             if (string.IsNullOrWhiteSpace(connectorId))
-            {                
+            {
                 var bad = req.CreateResponse(HttpStatusCode.BadRequest);
                 await bad.WriteStringAsync("Missing connectorId.");
                 return bad;
