@@ -39,6 +39,7 @@ public class ConnectorStateFunctions
             });
             if (body == null)
             {
+                //cREATE3
                 var bad = req.CreateResponse(HttpStatusCode.BadRequest);
                 await bad.WriteStringAsync("Missing or invalid request body.");
                 return bad;
