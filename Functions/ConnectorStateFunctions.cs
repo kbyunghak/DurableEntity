@@ -27,7 +27,7 @@ public class ConnectorStateFunctions
             Log.Information("C# HTTP trigger function processed a request.");
 
             if (string.IsNullOrWhiteSpace(connectorId))
-            {
+            {                
                 var bad = req.CreateResponse(HttpStatusCode.BadRequest);
                 await bad.WriteStringAsync("Missing connectorId.");
                 return bad;
@@ -41,8 +41,7 @@ public class ConnectorStateFunctions
                 var bad = req.CreateResponse(HttpStatusCode.BadRequest);
                 await bad.WriteStringAsync("Missing or invalid request body.");
                 return bad;
-            }
-            //test           
+            }            
             var entityId = new EntityInstanceId(nameof(ConnectorStateEntity), connectorId);
             await client.Entities.SignalEntityAsync(entityId, "SetState", body.State);
 
